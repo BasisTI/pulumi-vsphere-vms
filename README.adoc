@@ -1,0 +1,3 @@
+= pulumi-vsphere-vms
+
+This repository contains a Pulumi component for managing vSphere virtual machines.
