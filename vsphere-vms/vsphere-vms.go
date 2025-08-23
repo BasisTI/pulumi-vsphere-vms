@@ -3,6 +3,7 @@ package vsphere_vms
 import (
 	"github.com/pulumi/pulumi-vsphere/sdk/v4/go/vsphere"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 )
 
 // VmData defines the structure for a virtual machine's data.
@@ -14,7 +15,6 @@ type VmData struct {
 	Ipv4Address string `yaml:"ipv4address"` // IPv4 address of the virtual machine.
 	NumCpus     int    `yaml:"numCpus"`     // Number of CPUs for the virtual machine.
 	Memory      int    `yaml:"memory"`      // Memory size in MB for the virtual machine.
-	Type        string `yaml:"type"`        // Type of the virtual machine (e.g., "k8s-master", "k8s-worker").
 }
 
 // VsphereCfg defines the vSphere-specific configuration required for creating virtual machines.
@@ -39,7 +39,7 @@ type NetworkCfg struct {
 	DnsServers  []string `yaml:"dnsServers"`  // List of DNS server IP addresses.
 	DnsSuffixes []string `yaml:"dnsSuffixes"` // List of DNS suffixes.
 	Domain      string   `yaml:"domain"`      // Network domain name.
-	Mask        int      `yaml:"mask"`         // Subnet mask.
+	Mask        int      `yaml:"mask"`        // Subnet mask.
 }
 
 // LookupData holds the results of vSphere lookups.
@@ -66,6 +66,18 @@ type VsphereVmsArgs struct {
 	Vms        []VmData
 	VsphereCfg VsphereCfg
 	NetworkCfg NetworkCfg
+}
+
+// NewVsphereVmsFromConfig creates a new VsphereVms component by reading configuration from Pulumi config.
+// It automatically reads the "vms", "vsphereCfg", and "networkCfg" configuration objects.
+func NewVsphereVmsFromConfig(ctx *pulumi.Context, name string, opts ...pulumi.ResourceOption) (*VsphereVms, error) {
+	var vsphereVmsArgs VsphereVmsArgs
+	cfg := config.New(ctx, "")
+	cfg.RequireObject("vms", &vsphereVmsArgs.Vms)
+	cfg.RequireObject("vsphereCfg", &vsphereVmsArgs.VsphereCfg)
+	cfg.RequireObject("networkCfg", &vsphereVmsArgs.NetworkCfg)
+
+	return NewVsphereVms(ctx, name, &vsphereVmsArgs, opts...)
 }
 
 // NewVsphereVms creates a new VsphereVms component.
@@ -104,6 +116,7 @@ func NewVsphereVms(ctx *pulumi.Context, name string, args *VsphereVmsArgs, opts 
 // It uses the provided lookup data and configuration to clone a new VM from a template.
 func createVm(ctx *pulumi.Context, lookupData *LookupData, networkCfg NetworkCfg, vsphereCfg VsphereCfg, vm VmData, opts ...pulumi.ResourceOption) (*vsphere.VirtualMachine, error) {
 	templateVm := lookupData.TemplateVm
+	const net_timeout = 300
 	newVm, err := vsphere.NewVirtualMachine(ctx, vm.Name, &vsphere.VirtualMachineArgs{
 		Name:                   pulumi.String(vm.Name),
 		ResourcePoolId:         pulumi.String(lookupData.Cluster.ResourcePoolId),
@@ -119,8 +132,8 @@ func createVm(ctx *pulumi.Context, lookupData *LookupData, networkCfg NetworkCfg
 		Firmware:               pulumi.StringPtrFromPtr(templateVm.Firmware),
 		Folder:                 pulumi.String(vsphereCfg.VmsFolder),
 		GuestId:                pulumi.String("ubuntu64Guest"),
-		WaitForGuestIpTimeout:  pulumi.Int(-1),
-		WaitForGuestNetTimeout: pulumi.Int(-1),
+		WaitForGuestIpTimeout:  pulumi.Int(net_timeout),
+		WaitForGuestNetTimeout: pulumi.Int(net_timeout),
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -164,9 +177,10 @@ func getVMCloneArgs(lookupData *LookupData, networkCfg NetworkCfg, vm VmData) *v
 			},
 			NetworkInterfaces: vsphere.VirtualMachineCloneCustomizeNetworkInterfaceArray{
 				&vsphere.VirtualMachineCloneCustomizeNetworkInterfaceArgs{
-					DnsDomain:   pulumi.String(networkCfg.Domain),
-					Ipv4Address: pulumi.String(vm.Ipv4Address),
-					Ipv4Netmask: pulumi.Int(networkCfg.Mask),
+					DnsDomain:      pulumi.String(networkCfg.Domain),
+					DnsServerLists: toStringArray(networkCfg.DnsServers),
+					Ipv4Address:    pulumi.String(vm.Ipv4Address),
+					Ipv4Netmask:    pulumi.Int(networkCfg.Mask),
 				},
 			},
 		},

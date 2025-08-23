@@ -1,0 +1,12 @@
+config:
+  example:vms:
+    - name: test-vm-01
+      hostname: testvm01
+      ipv4address: 192.168.1.100
+      numcpus: 4
+      memory: 4096
+    - name: test-vm-02
+      hostname: testvm02
+      ipv4address: 192.168.1.101
+      numcpus: 4
+      memory: 4096

@@ -1,11 +1,13 @@
-module github.com/BasisTI/pulumi-vsphere-vms
+module github.com/BasisTI/pulumi-vsphere-vms/example
 
 go 1.24.1
 
 require (
-	github.com/pulumi/pulumi-vsphere/sdk/v4 v4.15.0
+	github.com/BasisTI/pulumi-vsphere-vms v0.0.0
 	github.com/pulumi/pulumi/sdk/v3 v3.191.0
 )
+
+require github.com/pulumi/pulumi-vsphere/sdk/v4 v4.15.0 // indirect
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
@@ -91,3 +93,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/frand v1.4.2 // indirect
 )
+
+// Use local version of the component for testing
+replace github.com/BasisTI/pulumi-vsphere-vms => ../

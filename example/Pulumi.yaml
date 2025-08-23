@@ -1,0 +1,32 @@
+name: pulumi-vsphere-vms-example
+runtime: go
+description: Example usage of the pulumi-vsphere-vms component
+
+config:
+  vsphere:allowUnverifiedSsl:
+    value: true
+  vsphere:vsphereServer:
+    value: 'vsphere.example.com'
+  vsphere:user:
+    value: 'administrator@vsphere.local'
+  vsphereCfg:
+    value:
+      datacenter: Datacenter-01
+      datastore: vms
+      cluster: Cluster-01
+      networkname: VM Network
+      templatename: ubuntu-24.04
+      templatefolder: Templates
+      vmsfolder: /Example
+      enableDiskUuid: true
+      enableLogging: true
+  networkCfg:
+    value:
+      gateway: 192.168.1.1
+      dnsServers:
+        - 192.168.1.1
+      dnsSuffixes:
+        - example.com
+        - locak.example.com
+      mask: 24
+      domain: example.com
