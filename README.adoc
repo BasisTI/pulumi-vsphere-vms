@@ -67,7 +67,26 @@ vsphereVms, err := vsphere_vms.NewVsphereVms(ctx, "my-vms", args)
 
 == Configuration
 
-When using `NewVsphereVmsFromConfig`, the component automatically reads three configuration objects from your Pulumi YAML files:
+When using `NewVsphereVmsFromConfig`, the component automatically reads three required configuration objects and one optional parameter from your Pulumi YAML files:
+
+=== Optional Configuration Parameters
+
+==== `makeAlias` - Resource Aliasing
+
+[source,yaml]
+----
+makeAlias: true
+----
+
+.MakeAlias Parameter
+[cols="1,1,3"]
+|===
+|Field |Type |Description
+
+|`makeAlias`
+|bool
+|Optional. When set to `true`, creates Pulumi resource aliases for existing VMs. This is useful when refactoring existing projects to use this component, allowing Pulumi to recognize existing resources instead of trying to recreate them. Defaults to `false` if not specified.
+|===
 
 === Required Configuration Objects
 
@@ -130,6 +149,8 @@ vsphereCfg:
   vmsFolder: "vms"
   enableLogging: true
   enableDiskUuid: true
+  waitForGuestIpTimeout: 300    # Optional, defaults to 300 seconds
+  waitForGuestNetTimeout: 300   # Optional, defaults to 300 seconds
 ----
 
 .vSphere Configuration Fields
@@ -172,6 +193,14 @@ vsphereCfg:
 |`enableDiskUuid`
 |bool
 |Enable disk UUID for the VMs
+
+|`waitForGuestIpTimeout`
+|int
+|Optional. Timeout in seconds for waiting for guest IP address. Defaults to 300 seconds if not specified.
+
+|`waitForGuestNetTimeout`
+|int
+|Optional. Timeout in seconds for waiting for guest network to be ready. Defaults to 300 seconds if not specified.
 |===
 
 ==== `networkCfg` - Network Configuration

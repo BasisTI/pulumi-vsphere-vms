@@ -1,6 +1,8 @@
 package vsphere_vms
 
 import (
+	"fmt"
+
 	"github.com/pulumi/pulumi-vsphere/sdk/v4/go/vsphere"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
@@ -21,15 +23,17 @@ type VmData struct {
 // This includes details about the vSphere environment, such as datacenter, datastore, and cluster information.
 // It also specifies the template to be used for cloning new VMs.
 type VsphereCfg struct {
-	Datacenter     string `yaml:"datacenter"`     // Name of the vSphere datacenter.
-	Datastore      string `yaml:"datastore"`      // Name of the vSphere datastore.
-	Cluster        string `yaml:"cluster"`        // Name of the vSphere cluster.
-	NetworkName    string `yaml:"networkName"`    // Name of the vSphere network.
-	TemplateName   string `yaml:"templateName"`   // Name of the VM template to clone from.
-	TemplateFolder string `yaml:"templateFolder"` // Folder containing the VM template.
-	VmsFolder      string `yaml:"vmsFolder"`      // Folder to place the new virtual machines in.
-	EnableLogging  bool   `yaml:"enableLogging"`  // Enable logging for the virtual machine.
-	EnableDiskUuid bool   `yaml:"enableDiskUuid"` // Enable disk UUID for the virtual machine.
+	Datacenter             string `yaml:"datacenter"`             // Name of the vSphere datacenter.
+	Datastore              string `yaml:"datastore"`              // Name of the vSphere datastore.
+	Cluster                string `yaml:"cluster"`                // Name of the vSphere cluster.
+	NetworkName            string `yaml:"networkName"`            // Name of the vSphere network.
+	TemplateName           string `yaml:"templateName"`           // Name of the VM template to clone from.
+	TemplateFolder         string `yaml:"templateFolder"`         // Folder containing the VM template.
+	VmsFolder              string `yaml:"vmsFolder"`              // Folder to place the new virtual machines in.
+	EnableLogging          bool   `yaml:"enableLogging"`          // Enable logging for the virtual machine.
+	EnableDiskUuid         bool   `yaml:"enableDiskUuid"`         // Enable disk UUID for the virtual machine.
+	WaitForGuestIpTimeout  int    `yaml:"waitForGuestIpTimeout"`  // Timeout in seconds for waiting for guest IP (default: 300).
+	WaitForGuestNetTimeout int    `yaml:"waitForGuestNetTimeout"` // Timeout in seconds for waiting for guest network (default: 300).
 }
 
 // NetworkCfg defines the network configuration for the virtual machines.
@@ -66,16 +70,27 @@ type VsphereVmsArgs struct {
 	Vms        []VmData
 	VsphereCfg VsphereCfg
 	NetworkCfg NetworkCfg
+	MakeAlias  *bool // Optional parameter to enable aliases (defaults to false)
 }
 
 // NewVsphereVmsFromConfig creates a new VsphereVms component by reading configuration from Pulumi config.
 // It automatically reads the "vms", "vsphereCfg", and "networkCfg" configuration objects.
+// It also optionally reads the "makeAlias" boolean flag from the root config.
 func NewVsphereVmsFromConfig(ctx *pulumi.Context, name string, opts ...pulumi.ResourceOption) (*VsphereVms, error) {
 	var vsphereVmsArgs VsphereVmsArgs
 	cfg := config.New(ctx, "")
 	cfg.RequireObject("vms", &vsphereVmsArgs.Vms)
 	cfg.RequireObject("vsphereCfg", &vsphereVmsArgs.VsphereCfg)
 	cfg.RequireObject("networkCfg", &vsphereVmsArgs.NetworkCfg)
+
+	if vsphereVmsArgs.VsphereCfg.WaitForGuestIpTimeout == 0 {
+		vsphereVmsArgs.VsphereCfg.WaitForGuestIpTimeout = 300
+	}
+	if vsphereVmsArgs.VsphereCfg.WaitForGuestNetTimeout == 0 {
+		vsphereVmsArgs.VsphereCfg.WaitForGuestNetTimeout = 300
+	}
+	makeAlias := cfg.GetBool("makeAlias")
+	vsphereVmsArgs.MakeAlias = &makeAlias
 
 	return NewVsphereVms(ctx, name, &vsphereVmsArgs, opts...)
 }
@@ -96,7 +111,21 @@ func NewVsphereVms(ctx *pulumi.Context, name string, args *VsphereVmsArgs, opts 
 
 	var virtualMachines []*vsphere.VirtualMachine
 	for _, vm := range args.Vms {
-		newVm, err := createVm(ctx, lookupData, args.NetworkCfg, args.VsphereCfg, vm, pulumi.Parent(vsphereVms))
+		var opts []pulumi.ResourceOption
+		opts = append(opts, pulumi.Parent(vsphereVms))
+		oldURN := fmt.Sprintf("urn:pulumi:%s::%s::vsphere:index/virtualMachine:VirtualMachine::%s",
+			ctx.Stack(), ctx.Project(), vm.Name)
+		if args.MakeAlias != nil && *args.MakeAlias {
+			ctx.Log.Info(fmt.Sprintf("Adding alias for VM: %s - URN: %s", vm.Name, oldURN), nil)
+			aliases := pulumi.Aliases([]pulumi.Alias{
+				{
+					URN: pulumi.URN(oldURN),
+				},
+			})
+			opts = append(opts, aliases)
+		}
+
+		newVm, err := createVm(ctx, lookupData, args.NetworkCfg, args.VsphereCfg, vm, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -116,24 +145,24 @@ func NewVsphereVms(ctx *pulumi.Context, name string, args *VsphereVmsArgs, opts 
 // It uses the provided lookup data and configuration to clone a new VM from a template.
 func createVm(ctx *pulumi.Context, lookupData *LookupData, networkCfg NetworkCfg, vsphereCfg VsphereCfg, vm VmData, opts ...pulumi.ResourceOption) (*vsphere.VirtualMachine, error) {
 	templateVm := lookupData.TemplateVm
-	const net_timeout = 300
 	newVm, err := vsphere.NewVirtualMachine(ctx, vm.Name, &vsphere.VirtualMachineArgs{
-		Name:                   pulumi.String(vm.Name),
-		ResourcePoolId:         pulumi.String(lookupData.Cluster.ResourcePoolId),
-		DatastoreId:            pulumi.String(lookupData.Datastore.Id),
-		NumCpus:                pulumi.Int(vm.NumCpus),
-		Memory:                 pulumi.Int(vm.Memory),
-		Clone:                  getVMCloneArgs(lookupData, networkCfg, vm),
-		Disks:                  getVmCloneDiskArray(templateVm),
-		NetworkInterfaces:      getVmCloneNetworkInterfaceArray(templateVm, lookupData.Network),
-		EfiSecureBootEnabled:   pulumi.BoolPtrFromPtr(templateVm.EfiSecureBootEnabled),
-		EnableLogging:          pulumi.Bool(vsphereCfg.EnableLogging),
-		EnableDiskUuid:         pulumi.Bool(vsphereCfg.EnableDiskUuid),
-		Firmware:               pulumi.StringPtrFromPtr(templateVm.Firmware),
-		Folder:                 pulumi.String(vsphereCfg.VmsFolder),
-		GuestId:                pulumi.String("ubuntu64Guest"),
-		WaitForGuestIpTimeout:  pulumi.Int(net_timeout),
-		WaitForGuestNetTimeout: pulumi.Int(net_timeout),
+		Name:                    pulumi.String(vm.Name),
+		ResourcePoolId:          pulumi.String(lookupData.Cluster.ResourcePoolId),
+		DatastoreId:             pulumi.String(lookupData.Datastore.Id),
+		NumCpus:                 pulumi.Int(vm.NumCpus),
+		Memory:                  pulumi.Int(vm.Memory),
+		Clone:                   getVMCloneArgs(lookupData, networkCfg, vm),
+		Disks:                   getVmCloneDiskArray(templateVm),
+		NetworkInterfaces:       getVmCloneNetworkInterfaceArray(templateVm, lookupData.Network),
+		EfiSecureBootEnabled:    pulumi.BoolPtrFromPtr(templateVm.EfiSecureBootEnabled),
+		EnableLogging:           pulumi.Bool(vsphereCfg.EnableLogging),
+		EnableDiskUuid:          pulumi.Bool(vsphereCfg.EnableDiskUuid),
+		Firmware:                pulumi.StringPtrFromPtr(templateVm.Firmware),
+		Folder:                  pulumi.String(vsphereCfg.VmsFolder),
+		GuestId:                 pulumi.String("ubuntu64Guest"),
+		WaitForGuestIpTimeout:   pulumi.Int(vsphereCfg.WaitForGuestIpTimeout),
+		WaitForGuestNetTimeout:  pulumi.Int(vsphereCfg.WaitForGuestNetTimeout),
+		WaitForGuestNetRoutable: pulumi.Bool(true),
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -167,20 +196,22 @@ func getVmCloneDiskArray(templateVm *vsphere.LookupVirtualMachineResult) vsphere
 func getVMCloneArgs(lookupData *LookupData, networkCfg NetworkCfg, vm VmData) *vsphere.VirtualMachineCloneArgs {
 	return &vsphere.VirtualMachineCloneArgs{
 		TemplateUuid: pulumi.String(lookupData.TemplateVm.Id),
+		Timeout:      pulumi.Int(30),
 		Customize: &vsphere.VirtualMachineCloneCustomizeArgs{
 			DnsServerLists: toStringArray(networkCfg.DnsServers),
 			DnsSuffixLists: toStringArray(networkCfg.DnsSuffixes),
 			Ipv4Gateway:    pulumi.String(networkCfg.Gateway),
 			LinuxOptions: &vsphere.VirtualMachineCloneCustomizeLinuxOptionsArgs{
-				Domain:   pulumi.String(networkCfg.Domain),
-				HostName: pulumi.String(vm.HostName),
+				Domain:     pulumi.String(networkCfg.Domain),
+				HostName:   pulumi.String(vm.HostName),
+				HwClockUtc: pulumi.Bool(true),
 			},
 			NetworkInterfaces: vsphere.VirtualMachineCloneCustomizeNetworkInterfaceArray{
 				&vsphere.VirtualMachineCloneCustomizeNetworkInterfaceArgs{
-					DnsDomain:      pulumi.String(networkCfg.Domain),
-					DnsServerLists: toStringArray(networkCfg.DnsServers),
-					Ipv4Address:    pulumi.String(vm.Ipv4Address),
-					Ipv4Netmask:    pulumi.Int(networkCfg.Mask),
+					DnsDomain: pulumi.String(networkCfg.Domain),
+					//DnsServerLists: toStringArray(networkCfg.DnsServers),
+					Ipv4Address: pulumi.String(vm.Ipv4Address),
+					Ipv4Netmask: pulumi.Int(networkCfg.Mask),
 				},
 			},
 		},
