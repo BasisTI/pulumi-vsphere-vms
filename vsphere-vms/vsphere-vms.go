@@ -116,7 +116,7 @@ func NewVsphereVms(ctx *pulumi.Context, name string, args *VsphereVmsArgs, opts 
 		oldURN := fmt.Sprintf("urn:pulumi:%s::%s::vsphere:index/virtualMachine:VirtualMachine::%s",
 			ctx.Stack(), ctx.Project(), vm.Name)
 		if args.MakeAlias != nil && *args.MakeAlias {
-			ctx.Log.Info(fmt.Sprintf("Adding alias for VM: %s - URN: %s", vm.Name, oldURN), nil)
+			_ = ctx.Log.Debug(fmt.Sprintf("Adding alias for VM: %s - URN: %s", vm.Name, oldURN), nil)
 			aliases := pulumi.Aliases([]pulumi.Alias{
 				{
 					URN: pulumi.URN(oldURN),
